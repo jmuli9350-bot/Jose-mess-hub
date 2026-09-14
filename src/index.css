@@ -1,0 +1,4 @@
+:root { font-family: 'Aptos', 'Avenir Next', 'Segoe UI', sans-serif; color: #253036; background: #f5f6f2; font-synthesis: none; text-rendering: optimizeLegibility; -webkit-font-smoothing: antialiased; --ink: #253036; --muted: #7d8784; --line: #e4e8e3; --paper: #ffffff; }
+body { margin: 0; min-width: 320px; }
+button, select { font: inherit; }
+button { cursor: pointer; }
