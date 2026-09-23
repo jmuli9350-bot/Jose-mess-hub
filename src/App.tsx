@@ -127,14 +127,19 @@ const showBusinessConfirm = (businessName: string, message: string) => new Promi
   const overlay = document.createElement('div')
   overlay.className = 'business-confirm-backdrop'
   overlay.innerHTML = `<section class="business-confirm-dialog" role="dialog" aria-modal="true"><p class="eyebrow">${businessName}</p><h2>Confirm action</h2><p>${message}</p><div class="business-confirm-actions"><button type="button" data-confirm="cancel" class="secondary-button">Cancel</button><button type="button" data-confirm="ok" class="primary-button">Continue</button></div></section>`
-  const finish = (value: boolean) => { overlay.remove(); resolve(value) }
+  const finish = (value: boolean) => { document.removeEventListener('keydown', handleEscape); overlay.remove(); resolve(value) }
+  const handleEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') finish(false) }
+  document.addEventListener('keydown', handleEscape)
   overlay.addEventListener('click', (event) => { const button = (event.target as HTMLElement).closest('[data-confirm]') as HTMLElement | null; if (button) finish(button.dataset.confirm === 'ok'); if (event.target === overlay) finish(false) })
   document.body.appendChild(overlay)
 })
 const showBiometricPrompt = (title: string, detail: string) => {
   const overlay = document.createElement('div')
   overlay.className = 'biometric-dialog-backdrop'
-  overlay.innerHTML = `<section class="biometric-dialog" role="dialog" aria-modal="true"><div class="biometric-dialog-icon">⌁</div><p class="eyebrow">SECURE ACTION PROOF</p><h2>${title}</h2><p>${detail}</p><div class="biometric-dialog-status">Waiting for device verification...</div></section>`
+  overlay.innerHTML = `<section class="biometric-dialog" role="dialog" aria-modal="true"><button type="button" class="biometric-dialog-close" aria-label="Close">×</button><div class="biometric-dialog-icon">⌁</div><p class="eyebrow">SECURE ACTION PROOF</p><h2>${title}</h2><p>${detail}</p><div class="biometric-dialog-status">Waiting for device verification...</div></section>`
+  const close = () => overlay.remove()
+  overlay.addEventListener('click', (event) => { if (event.target === overlay || (event.target as HTMLElement).closest('.biometric-dialog-close')) close() })
+  document.addEventListener('keydown', (event) => { if (event.key === 'Escape') close() }, { once: true })
   document.body.appendChild(overlay)
   return { overlay, status: overlay.querySelector('.biometric-dialog-status') as HTMLElement }
 }
@@ -419,6 +424,19 @@ function WorkspaceLoadingPage({ businessName }: { businessName: string }) {
 function App() {
   const initialRefreshSession = readRefreshSession()
   const [activeNav, setActiveNav] = useState(() => pageForPath(window.location.pathname) || (initialRefreshSession?.path ? pageForPath(initialRefreshSession.path) : 'Welcome'))
+  useEffect(() => {
+    const modalSelector = '.admin-modal-backdrop, .account-choice-backdrop, .attendance-choice-backdrop, .print-dialog-backdrop, .payroll-detail-dialog, .biometric-dialog-backdrop, .business-confirm-backdrop'
+    const closeModal = (modal: Element) => {
+      const closeButton = modal.querySelector<HTMLElement>('.admin-modal-close, .choice-close, .print-dialog-close, .payroll-detail-close, .biometric-dialog-close, [data-confirm="cancel"]')
+      if (closeButton) closeButton.click()
+      else modal.remove()
+    }
+    const handleEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') { const modals = document.querySelectorAll(modalSelector); const modal = modals[modals.length - 1]; if (modal) { event.preventDefault(); closeModal(modal) } } }
+    const handleOutsideClick = (event: MouseEvent) => { const target = event.target as HTMLElement; const modal = target.closest(modalSelector); if (modal && target === modal) closeModal(modal) }
+    document.addEventListener('keydown', handleEscape)
+    document.addEventListener('mousedown', handleOutsideClick)
+    return () => { document.removeEventListener('keydown', handleEscape); document.removeEventListener('mousedown', handleOutsideClick) }
+  }, [])
   useEffect(() => {
     const preventNumberWheelChange = (event: WheelEvent) => {
       const target = event.target as HTMLElement

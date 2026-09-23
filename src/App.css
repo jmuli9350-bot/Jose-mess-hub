@@ -238,6 +238,8 @@
 input[type="number"] { appearance: textfield; }
 input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
 .biometric-dialog-backdrop { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 20px; background: #19332666; backdrop-filter: blur(5px); }
+.biometric-dialog { position: relative; }
+.biometric-dialog-close { position: absolute; top: 10px; right: 12px; border: 0; background: transparent; color: #7c8d82; font-size: 22px; cursor: pointer; }
 .biometric-dialog { width: min(100%, 420px); padding: 32px; border: 1px solid #d9e8da; border-radius: 16px; background: #fffdf9; box-shadow: 0 24px 70px #1f352b35; text-align: center; animation: biometric-dialog-in .2s ease-out; }
 .biometric-dialog-icon { width: 58px; height: 58px; display: grid; place-items: center; margin: 0 auto 18px; border-radius: 50%; background: #e3f1e5; color: #2f6740; font-size: 32px; }
 .biometric-dialog h2 { margin: 8px 0 10px; color: #294936; font-family: Georgia, serif; font-size: 25px; font-weight: 400; }
