@@ -435,6 +435,7 @@ function App() {
     const isOnline = true
     const syncLabel = 'Online only'
     const [attendanceNotice, setAttendanceNotice] = useState('')
+      const [attendanceNoticeTone, setAttendanceNoticeTone] = useState<'success' | 'error'>('success')
     const [ownerAccount, setOwnerAccount] = useState<OwnerAccount | null>(initialRefreshSession?.owner || null)
     const [siteAdminAccount, setSiteAdminAccount] = useState<OwnerAccount | null>(readStoredSiteAdminAccount)
     const [siteAdminSession, setSiteAdminSession] = useState(initialRefreshSession?.siteAdmin === true)
@@ -675,7 +676,7 @@ function App() {
   useEffect(() => {
     if (!attendanceNotice) return
     const notice = document.createElement('div')
-    notice.className = 'attendance-success'
+    notice.className = `attendance-success ${attendanceNoticeTone === 'error' ? 'attendance-error' : ''}`
     const message = document.createElement('span')
     message.textContent = attendanceNotice
     const close = document.createElement('button')
@@ -688,7 +689,7 @@ function App() {
     document.body.appendChild(notice)
     const timer = window.setTimeout(() => setAttendanceNotice(''), 3000)
     return () => { window.clearTimeout(timer); notice.remove() }
-  }, [attendanceNotice])
+  }, [attendanceNotice, attendanceNoticeTone])
   useEffect(() => {
     if (loadedTenantId === tenantId) return
     setLoadedTenantId(tenantId)
@@ -763,6 +764,17 @@ function App() {
 
   const todayAttendance = useMemo(() => members.map((member) => attendance.find((entry) => entry.memberId === member.id && entry.date === today) || { memberId: member.id, date: today, status: 'Absent' as AttendanceStatus, checkIn: '—', checkOut: '—' }), [members, attendance])
   const markChanged = () => undefined
+  const saveWorkspaceSnapshotNow = async () => {
+    if (!supabase || tenantId === 'workspace') {
+      setAttendanceNotice('Changes saved successfully')
+      setAttendanceNoticeTone('success')
+      return
+    }
+    const snapshot: WorkspaceSnapshot = { members: members.map(({ biometricCredentialId: _biometricCredentialId, ...member }) => member), departmentList, attendance, sales, salesHistory, deductions, expenses, stockMovements, inventory, storeCategories, categoryUnits, categoryThresholds, workspaceName, currency, paymentMethods, strictSignIn, allowMultipleDailyShifts, biometricSignIn, biometricSignOut, biometricMark, biometricPayroll, defaultSignIn, defaultSignOut, lateSignIn, earlySignOut, accessByMember }
+    const { error } = await supabase.from('workspace_snapshots').upsert({ tenant_id: tenantId, payload: snapshot, updated_at: new Date().toISOString() }, { onConflict: 'tenant_id' })
+    setAttendanceNotice(error ? `Could not save changes: ${error.message}` : 'Changes saved successfully')
+    setAttendanceNoticeTone(error ? 'error' : 'success')
+  }
   const saveBusinessName = async () => {
     const nextName = workspaceName.trim()
     if (!nextName || !ownerAccount?.tenantId) return
@@ -837,14 +849,7 @@ function App() {
     setIsCheckedIn(!isCheckedIn); markChanged()
   }
   const hasAttendanceForToday = (memberId: number) => attendance.some((entry) => entry.memberId === memberId && entry.date === today && (entry.checkIn !== '—' || entry.status === 'Present' || entry.status === 'Late' || entry.checkOut !== '—'))
-  const markMemberAttendance = async (memberId: number, status: 'Present' | 'Absent') => {
-    if (status === 'Present' && (window as any).__biometricAttendanceMember !== memberId) {
-      const verified = await requireBiometric(memberId, biometricMark, 'Mark attendance')
-      if (!verified) return false
-      ;(window as any).__biometricAttendanceMember = memberId
-      ;(window as any).__biometricAttendanceProof = await recordBiometricProof(memberId, 'mark')
-      try { return await markMemberAttendance(memberId, status) } finally { delete (window as any).__biometricAttendanceMember; delete (window as any).__biometricAttendanceProof }
-    }
+  const markMemberAttendance = async (memberId: number, status: 'Present' | 'Absent', biometricEnabled = biometricMark, biometricAction = 'Mark attendance') => {
     const member = members.find((person) => person.id === memberId)
     const existing = attendance.find((entry) => entry.memberId === memberId && entry.date === today)
     if (existing?.status === 'Off') {
@@ -869,26 +874,24 @@ function App() {
         return false
       }
     }
+    let biometricProof
+    if (status === 'Present' && biometricEnabled) {
+      if (!(await requireBiometric(memberId, true, biometricAction))) return false
+      biometricProof = await recordBiometricProof(memberId, 'mark')
+    }
     const nextEntry = {
       memberId,
       date: today,
       status: status === 'Present' ? (timeToMinutes(new Date().toTimeString().slice(0, 5)) > timeToMinutes(defaultSignIn) ? 'Late' as AttendanceStatus : 'Present' as AttendanceStatus) : 'Absent' as AttendanceStatus,
       checkIn: status === 'Present' ? new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
       checkOut: '—',
-      biometricProof: (window as any).__biometricAttendanceProof,
+      biometricProof,
     }
     setAttendance((current) => existing ? current.map((entry) => entry.memberId === memberId && entry.date === today ? nextEntry : entry) : [...current, nextEntry])
     markChanged()
     return status === 'Present'
   }
   const markMemberSignOut = async (memberId: number) => {
-    if ((window as any).__biometricSignOutMember !== memberId) {
-      const verified = await requireBiometric(memberId, biometricSignOut, 'Sign out')
-      if (!verified) return false
-      ;(window as any).__biometricSignOutMember = memberId
-      ;(window as any).__biometricSignOutProof = await recordBiometricProof(memberId, 'sign-out')
-      try { return await markMemberSignOut(memberId) } finally { delete (window as any).__biometricSignOutMember; delete (window as any).__biometricSignOutProof }
-    }
     const member = members.find((person) => person.id === memberId)
     const entry = attendance.find((item) => item.memberId === memberId && item.date === today)
     if (!entry || entry.status === 'Off' || entry.status === 'Absent' || entry.checkIn === '—') {
@@ -899,9 +902,14 @@ function App() {
       showAttendanceNotice(`${member?.name || 'This worker'} has already signed out for today.`)
       return false
     }
+    let biometricProof
+    if (biometricSignOut) {
+      if (!(await requireBiometric(memberId, true, 'Sign out'))) return false
+      biometricProof = await recordBiometricProof(memberId, 'sign-out')
+    }
     const checkOut = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const checkoutStatus = timeToMinutes(new Date().toTimeString().slice(0, 5)) < timeToMinutes(defaultSignOut) ? 'Early' as AttendanceStatus : entry.status
-    setAttendance((current) => current.map((item) => item.memberId === memberId && item.date === today ? { ...item, status: checkoutStatus, checkOut, biometricProof: (window as any).__biometricSignOutProof || item.biometricProof } : item))
+    setAttendance((current) => current.map((item) => item.memberId === memberId && item.date === today ? { ...item, status: checkoutStatus, checkOut, biometricProof: biometricProof || item.biometricProof } : item))
     markChanged()
     if (!(window as any).__bulkAttendanceInProgress) showAttendanceNotice(`${member?.name || 'This worker'} signed out successfully`)
     return true
@@ -1016,11 +1024,12 @@ function App() {
     setActiveNav('Activate business')
   }
   const declineClientRegistration = (requestId: number) => { setRegistrationRequests((current) => current.map((item) => item.id === requestId ? { ...item, reviewStatus: 'Declined' } : item)); void saveReviewDecision(`request:${requestId}`, 'Declined') }
-  const showAttendanceNotice = (message: string) => {
+  const showAttendanceNotice = (message: string, tone?: 'success' | 'error') => {
     setAttendanceNotice(message)
+    setAttendanceNoticeTone(tone || (/blocked|no registered|already|marked off|could not|failed|error|cancelled|not configured/i.test(message) ? 'error' : 'success'))
     navigate('Attendance')
   }
-  useEffect(() => { (window as any).__attendanceSuccess = (message: string) => showAttendanceNotice(message); return () => { delete (window as any).__attendanceSuccess } }, [attendanceNotice])
+  useEffect(() => { (window as any).__attendanceSuccess = (message: string) => showAttendanceNotice(message, 'success'); return () => { delete (window as any).__attendanceSuccess } }, [attendanceNotice])
   const updatePayrollStatus = (memberIds: number[], startDate: string, endDate: string, paymentStatus: PaymentStatus) => {
     setAttendance((current) => current.map((entry) => {
       const inScope = memberIds.includes(entry.memberId) && entry.checkOut !== '—' && entry.date >= startDate && entry.date <= endDate
@@ -1038,11 +1047,9 @@ function App() {
     navigate(firstAssignedPage || 'Overview', memberId)
   }
   const gatedMarkMemberAttendance = async (memberId: number, status: 'Present' | 'Absent') => {
-    if (status === 'Present' && !(await requireBiometric(memberId, biometricSignIn, 'Sign in'))) return false
-    return markMemberAttendance(memberId, status)
+    return markMemberAttendance(memberId, status, biometricSignIn, 'Sign in')
   }
   const gatedMarkMemberSignOut = async (memberId: number) => {
-    if (!(await requireBiometric(memberId, biometricSignOut, 'Sign out'))) return false
     return markMemberSignOut(memberId)
   }
   const verifyPayrollPayment = async (memberId: number) => {
@@ -1297,6 +1304,12 @@ function App() {
     panel.className = 'panel member-form biometric-policy-panel'
     panel.innerHTML = `<div class="panel-heading"><div><h2>Biometric verification</h2><p>Choose which worker actions require the worker's registered device biometric.</p></div></div><div class="settings-choice-grid"><label class="settings-choice biometric-choice"><input type="checkbox" data-biometric="sign-in"><span>Worker sign-in</span></label><label class="settings-choice biometric-choice"><input type="checkbox" data-biometric="sign-out"><span>Worker sign-out</span></label><label class="settings-choice biometric-choice"><input type="checkbox" data-biometric="mark"><span>Mark selected workers</span></label><label class="settings-choice biometric-choice"><input type="checkbox" data-biometric="payroll"><span>Payroll payment</span></label></div><p class="subheading">Biometrics use your browser's secure WebAuthn prompt. Raw fingerprint data never enters Biz Track.</p>`
     settings.appendChild(panel)
+    const saveButton = document.createElement('button')
+    saveButton.type = 'button'
+    saveButton.className = 'primary-button biometric-settings-save'
+    saveButton.textContent = 'Save changes'
+    saveButton.addEventListener('click', () => { void saveWorkspaceSnapshotNow() })
+    panel.appendChild(saveButton)
     const controls = panel.querySelectorAll<HTMLInputElement>('input[data-biometric]')
     controls.forEach((control) => {
       const key = control.dataset.biometric
@@ -1304,7 +1317,7 @@ function App() {
       control.addEventListener('change', () => { if (key === 'sign-in') setBiometricSignIn(control.checked); if (key === 'sign-out') setBiometricSignOut(control.checked); if (key === 'mark') setBiometricMark(control.checked); if (key === 'payroll') setBiometricPayroll(control.checked); markChanged() })
     })
     return () => panel.remove()
-  }, [activeNav, biometricSignIn, biometricSignOut, biometricMark, biometricPayroll])
+  }, [activeNav, biometricSignIn, biometricSignOut, biometricMark, biometricPayroll, workspaceName, tenantId])
   /*
     <main className="main-content"><header className="topbar"><div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{activeNav}</strong></div><div className="top-actions"><div className={`sync-status ${isOnline ? 'online' : 'offline'}`}><span className="status-dot"></span>{syncLabel}</div><button className="icon-button" aria-label="Notifications">♧<span className="notification-dot"></span></button><div className="profile-menu"><div className="avatar avatar-olive">KA</div><span><strong>{sessionMemberId === 0 ? 'Kemi A.' : members.find((member) => member.id === sessionMemberId)?.name || 'Worker'}</strong><small>{sessionMemberId === 0 ? role : 'Worker'}</small></span><button className="text-button" onClick={logout}>Log out</button></div></div></header><div className="page-content">{activeNav === 'Login' ? <LoginPage members={members} onLogin={login} /> : !canAccess(activeNav) ? <AccessDeniedPage onBack={() => navigate('Overview')} /> : activeNav === 'Attendance' ? <AttendancePage members={members} entries={todayAttendance} /> : activeNav === 'Departments' ? <DepartmentsPage departments={departmentList} members={members} onAdd={() => navigate('Add department')} onDelete={deleteDepartment} /> : activeNav === 'Add department' ? <AddDepartmentPage onSubmit={addDepartment} onCancel={() => navigate('Departments')} /> : activeNav === 'Add member' ? <AddMemberPage departments={departmentList} defaultSignIn={defaultSignIn} defaultSignOut={defaultSignOut} onSubmit={addMember} onCancel={() => navigate('Team')} /> : activeNav === 'Team' ? <TeamPage members={members} onAdd={() => navigate('Add member')} onDelete={deleteMember} /> : activeNav === 'Payroll' ? <PayrollPage members={members} attendance={attendance} /> : activeNav === 'Sales' ? <SalesPage sales={sales} salesHistory={salesHistory} onAdd={addSale} onReset={resetSales} /> : activeNav === 'Inventory' ? <InventoryPage inventory={inventory} categories={storeCategories} onAdd={addInventoryItem} onAdjust={updateInventoryQuantity} /> : activeNav === 'Settings' ? <SettingsPage members={members} defaultSignIn={defaultSignIn} defaultSignOut={defaultSignOut} strictSignIn={strictSignIn} setStrictSignIn={setStrictSignIn} categories={storeCategories} setCategories={setStoreCategories} setDefaultSignIn={setDefaultSignIn} setDefaultSignOut={setDefaultSignOut} setMembers={setMembers} onChange={markChanged} /> : activeNav === 'Worker sign-in' ? <WorkerSignInPage members={members} entries={attendance} strictSignIn={strictSignIn} defaultSignIn={defaultSignIn} onAttendance={toggleCurrentAttendance} onMarkAttendance={markMemberAttendance} onMarkSignOut={markMemberSignOut} /> : <OverviewPage role={role} setRole={setRole} members={members} isCheckedIn={isCheckedIn} setIsCheckedIn={toggleCurrentAttendance} isOnline={isOnline} onAttendance={() => navigate('Attendance')} />}</div></main>
   */
