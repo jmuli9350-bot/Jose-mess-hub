@@ -36,6 +36,15 @@ Fingerprint readers are tenant-configurable through `public.biometric_devices`: 
 
 Hardware integration requires a small local bridge supplied by the reader manufacturer or SDK. The bridge should expose a provider-neutral contract: `POST /enroll` returns `{ "subjectIdentifier": "..." }`, and `POST /verify` accepts `{ "subjectIdentifier": "..." }` and returns `{ "verified": true }`. Different tenants can point `bridge_url` and `provider/model` at different reader integrations.
 
+When an enabled row exists in `public.biometric_devices` with a `bridge_url`, the app uses that scanner bridge for worker enrollment and verification. Configure one row per tenant, for example:
+
+```sql
+insert into public.biometric_devices (tenant_id, provider, model, device_identifier, bridge_url)
+values ('your-tenant-id', 'vendor-name', 'reader-model', 'reader-01', 'https://scanner-bridge.example.com');
+```
+
+The bridge must be reachable from the browser, allow CORS from the deployed app, and use HTTPS when Biz Track is served over HTTPS. A USB reader by itself cannot be called directly by a normal web page; it needs the manufacturer's local bridge or SDK service. If no enabled bridge is found, Biz Track falls back to the browser's WebAuthn/passkey prompt.
+
 ## Deploy to Vercel
 
 From the project folder, run:

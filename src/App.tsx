@@ -95,6 +95,18 @@ const hashPassword = (password: string) => isBcryptHash(password) ? Promise.reso
 const toBase64Url = (value: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(value))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 const fromBase64Url = (value: string) => { const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((value.length + 3) % 4); return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0)) }
 const biometricSupported = () => Boolean(window.isSecureContext && navigator.credentials && window.PublicKeyCredential)
+type BiometricBridge = { bridge_url: string; provider: string; model: string; device_identifier: string }
+const readBiometricBridge = async (tenantId: string): Promise<BiometricBridge | null> => {
+  if (!supabase || !tenantId || tenantId === 'workspace') return null
+  const { data, error } = await supabase.from('biometric_devices').select('bridge_url,provider,model,device_identifier').eq('tenant_id', tenantId).eq('enabled', true).not('bridge_url', 'is', null).limit(1).maybeSingle()
+  if (error || !data?.bridge_url) return null
+  return data as BiometricBridge
+}
+const callBiometricBridge = async (bridge: BiometricBridge, path: '/enroll' | '/verify', body: Record<string, string>) => {
+  const response = await fetch(`${bridge.bridge_url.replace(/\/$/, '')}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  if (!response.ok) throw new Error(`The ${bridge.provider} scanner bridge returned an error.`)
+  return response.json() as Promise<{ subjectIdentifier?: string; verified?: boolean }>
+}
 const ensureOwnerTenantSession = async (username: string, password: string, tenantId?: string) => {
   if (!supabase || !tenantId) return false
   const email = `${username.trim().toLowerCase()}@biztrack.app`
@@ -132,7 +144,13 @@ async function runBiometricPrompt<T>(title: string, detail: string, operation: (
 }
 async function registerBiometric(memberId: number, memberName: string, businessName: string, tenantId: string, owner?: { username: string; password: string }) {
   return runBiometricPrompt('Register worker biometric', `Verify ${memberName} for ${businessName}. This will be used as proof for this worker's attendance actions.`, async () => {
-    if (!biometricSupported()) throw new Error('This browser or device does not support biometric verification. Use HTTPS or localhost and try again.')
+    const bridge = await readBiometricBridge(tenantId)
+    if (bridge) {
+      const result = await callBiometricBridge(bridge, '/enroll', { memberId: String(memberId), memberName, deviceIdentifier: bridge.device_identifier })
+      if (!result.subjectIdentifier) throw new Error('The scanner did not return a worker subject identifier.')
+      return result.subjectIdentifier
+    }
+    if (!biometricSupported()) throw new Error('No scanner bridge is configured, and this browser or device does not support biometric verification. Configure a scanner bridge or use HTTPS with WebAuthn.')
     if (supabase && tenantId && owner) {
       const { data: existingCredentials, error } = await supabase.rpc('list_owner_biometric_credentials', { requested_tenant_id: tenantId, requested_username: owner.username, requested_password: owner.password })
       if (error) throw new Error('Could not check this business biometric registry. Run the latest Supabase SQL migration and try again.')
@@ -151,8 +169,14 @@ async function registerBiometric(memberId: number, memberName: string, businessN
     return toBase64Url(credential.rawId)
   })
 }
-async function verifyBiometric(credentialId: string, action = 'attendance action', businessName = 'your business') {
+async function verifyBiometric(credentialId: string, tenantId: string, action = 'attendance action', businessName = 'your business') {
   return runBiometricPrompt(`Confirm ${action}`, `Verify the registered worker biometric for ${businessName} before this action can be completed.`, async () => {
+    const bridge = await readBiometricBridge(tenantId)
+    if (bridge) {
+      const result = await callBiometricBridge(bridge, '/verify', { subjectIdentifier: credentialId, deviceIdentifier: bridge.device_identifier })
+      if (!result.verified) throw new Error('The scanner could not verify this worker.')
+      return true
+    }
     if (!biometricSupported()) throw new Error('This browser or device does not support biometric verification. Use HTTPS or localhost and try again.')
     const credential = await navigator.credentials.get({ publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), allowCredentials: [{ id: fromBase64Url(credentialId), type: 'public-key' }], userVerification: 'required', timeout: 60000 } })
     if (!credential) throw new Error('Biometric verification was cancelled.')
@@ -751,7 +775,7 @@ function App() {
     if (!enabled) return true
     const member = members.find((item) => item.id === memberId)
     if (!member?.biometricCredentialId) { showAttendanceNotice(`${member?.name || 'This worker'} has no registered biometric. Ask the owner to register it.`); return false }
-    try { await verifyBiometric(member.biometricCredentialId, action, workspaceName); return true } catch (error) { showAttendanceNotice(error instanceof Error ? `${action} blocked: ${error.message}` : `${action} blocked by biometric verification.`); return false }
+    try { await verifyBiometric(member.biometricCredentialId, tenantId, action, workspaceName); return true } catch (error) { showAttendanceNotice(error instanceof Error ? `${action} blocked: ${error.message}` : `${action} blocked by biometric verification.`); return false }
   }
   const recordBiometricProof = async (memberId: number, action: 'sign-in' | 'sign-out' | 'mark' | 'payroll') => {
     const member = members.find((item) => item.id === memberId)
