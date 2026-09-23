@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 520" role="img" aria-labelledby="title desc">
+  <title id="title">Site maintenance</title>
+  <desc id="desc">Two disconnected blue electrical plugs</desc>
+  <rect width="800" height="520" fill="#fff"/>
+  <circle cx="400" cy="220" r="180" fill="#eef8fc"/>
+  <path d="M0 270H800" stroke="#0b4f7d" stroke-width="4"/>
+  <path d="M0 282H800" stroke="#0b4f7d" stroke-width="2"/>
+  <g fill="#9bd7f2" stroke="#075687" stroke-width="6" stroke-linejoin="round">
+    <path d="M230 246h-80c-18 0-32 14-32 32s14 32 32 32h80z"/>
+    <path d="M230 204h75c20 0 36 16 36 36v76c0 20-16 36-36 36h-75z"/>
+    <path d="M305 204v148M326 226v104"/>
+    <path d="M570 246h80c18 0 32 14 32 32s-14 32-32 32h-80z"/>
+    <path d="M570 204h-75c-20 0-36 16-36 36v76c0 20 16 36 36 36h75z"/>
+    <path d="M495 204v148M474 226v104"/>
+  </g>
+  <text x="400" y="105" text-anchor="middle" font-family="Arial, sans-serif" font-size="32" font-weight="700" fill="#064b78">This site is under</text>
+  <text x="400" y="145" text-anchor="middle" font-family="Arial, sans-serif" font-size="32" font-weight="700" fill="#064b78">maintenance</text>
+  <text x="400" y="180" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#5a91ad">We&apos;re preparing to serve you better.</text>
+</svg>

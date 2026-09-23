@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="BizTrack">
+  <rect width="64" height="64" rx="12" fill="#fff"/>
+  <path d="M15 11c-8 8-10 22-4 33 7 13 23 19 37 14 8-3 13-9 16-18-1 11-7 19-17 23-16 6-34-1-42-15C-2 34 2 18 15 11Z" fill="#087aa4"/>
+  <path d="M18 13c-6 8-7 19-2 29 6 12 20 18 33 14 7-2 12-7 15-14-2 10-8 17-17 20-15 5-30-2-37-15-6-12-3-26 8-34Z" fill="#ef6426"/>
+  <path d="M19 13c-5 8-5 18 0 27 6 11 19 16 31 13 7-2 12-6 15-12-3 10-10 16-19 18-14 3-28-4-34-16-5-11-2-23 7-30Z" fill="#fff"/>
+  <rect x="20" y="31" width="7" height="16" rx="1" fill="#17213d"/>
+  <rect x="30" y="22" width="7" height="25" rx="1" fill="#ef6426"/>
+  <rect x="40" y="12" width="7" height="35" rx="1" fill="#087aa4"/>
+</svg>
