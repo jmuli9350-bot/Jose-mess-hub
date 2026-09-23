@@ -309,6 +309,48 @@ create policy "Members access their workspace session" on public.workspace_sessi
 create policy "Members access their biometric devices" on public.biometric_devices for all to authenticated using (public.has_tenant_access(tenant_id)) with check (public.has_tenant_access(tenant_id));
 create policy "Platform admins manage site snapshots" on public.site_admin_snapshots for all to authenticated using (public.is_platform_admin()) with check (public.is_platform_admin());
 
+-- Platform identity and maintenance status are public, but only the site-admin
+-- credentials may change them from the client application.
+drop policy if exists "Anyone can read platform settings" on public.platform_settings;
+create policy "Anyone can read platform settings" on public.platform_settings for select to anon, authenticated using (true);
+
+create or replace function public.save_platform_settings(
+  requested_username text,
+  requested_password text,
+  requested_platform_name text,
+  requested_support_email text,
+  requested_whatsapp_number text,
+  requested_default_plan text,
+  requested_maintenance_mode boolean
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  stored_password text;
+begin
+  select password into stored_password
+  from public.site_admin_accounts
+  where id = 1 and lower(username) = lower(trim(requested_username));
+  if stored_password is null or not (stored_password = requested_password or (stored_password like '$2%' and crypt(requested_password, stored_password) = stored_password)) then
+    raise exception 'Site admin verification failed';
+  end if;
+  insert into public.platform_settings (id, platform_name, support_email, whatsapp_number, default_plan, maintenance_mode)
+  values (1, trim(requested_platform_name), trim(requested_support_email), regexp_replace(requested_whatsapp_number, '[^0-9]', '', 'g'), requested_default_plan, requested_maintenance_mode)
+  on conflict (id) do update set
+    platform_name = excluded.platform_name,
+    support_email = excluded.support_email,
+    whatsapp_number = excluded.whatsapp_number,
+    default_plan = excluded.default_plan,
+    maintenance_mode = excluded.maintenance_mode;
+end;
+$$;
+
+revoke all on function public.save_platform_settings(text, text, text, text, text, text, boolean) from public;
+grant execute on function public.save_platform_settings(text, text, text, text, text, text, boolean) to anon, authenticated;
+
 -- Reader subject identifiers and verification proofs are kept out of the
 -- exposed public schema and out of workspace_snapshots.payload.
 create schema if not exists private_biometrics;

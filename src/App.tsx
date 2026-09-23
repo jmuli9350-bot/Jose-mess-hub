@@ -1360,7 +1360,25 @@ function App() {
   if (activeNav === 'Business') return <BusinessAccountsPage accounts={businessAccounts} activeNav="Business" onNavigate={navigate} onCreate={() => navigate('Register a new business')} onSignOut={adminSignOut} onUpdateStatus={(accountId, updates) => { if (updates.status === 'Paused' && !window.confirm('Are you sure you want to suspend this business? All owners and workers will be unable to log in.')) return; updateSubscription(accountId, updates) }} onDelete={(accountId) => { setDeleteTargetId(accountId); navigate('Delete') }} />
   if (activeNav === 'Delete') { const account = businessAccounts.find((item) => item.id === deleteTargetId); return <DeleteBusinessPage account={account} onCancel={() => navigate('Business')} onDelete={deleteBusinessAccount} /> }
   if (activeNav === 'Users') return <AdminUsersPage accounts={businessAccounts} activeNav={activeNav} onNavigate={navigate} onSignOut={adminSignOut} />
-  if (activeNav === 'Admin settings') return <AdminPlatformSettingsShell activeNav="Admin settings" onNavigate={navigate} settings={platformSettings} onSave={(settings) => { setPlatformSettings(settings); setMaintenanceMode(settings.maintenanceMode); navigate('Dashboard') }} />
+  const savePlatformSettings = async (settings: PlatformSettings) => {
+    if (supabase && siteAdminAccount) {
+      const { error } = await supabase.rpc('save_platform_settings', {
+        requested_username: siteAdminAccount.username,
+        requested_password: siteAdminAccount.password,
+        requested_platform_name: settings.platformName,
+        requested_support_email: settings.supportEmail,
+        requested_whatsapp_number: settings.whatsappNumber,
+        requested_default_plan: settings.defaultPlan,
+        requested_maintenance_mode: settings.maintenanceMode,
+      })
+      if (error) throw new Error(error.message)
+    }
+    localStorage.setItem('biztrack-whatsapp-number', settings.whatsappNumber)
+    setPlatformSettings(settings)
+    setMaintenanceMode(settings.maintenanceMode)
+    navigate('Dashboard')
+  }
+  if (activeNav === 'Admin settings') return <AdminPlatformSettingsShell activeNav="Admin settings" onNavigate={navigate} settings={platformSettings} siteAdminAccount={siteAdminAccount} onSave={savePlatformSettings} />
   const maintenanceView = maintenanceMode || (window.location.pathname.replace(/\/$/, '') === '/welcome' && new URLSearchParams(window.location.search).get('mode') === 'maintenance') || window.location.pathname.replace(/\/$/, '') === '/welcome/mode=maintenance'
   if (!platformSettingsReady && !window.location.pathname.startsWith('/admin')) return <WorkspaceLoadingPage businessName={businessName} />
   if (maintenanceView && !window.location.pathname.startsWith('/admin')) return <MaintenancePage settings={platformSettings} siteAdminAccount={siteAdminAccount} onAdminLogin={() => { startSiteAdminSession(); navigate('Admin') }} onNavigate={navigate} />
@@ -2184,21 +2202,21 @@ function SubscriptionPage({ accounts, onUpdate, onBack }: { accounts: BusinessAc
   return <div className="app-shell"><aside className="sidebar"><button className="brand" onClick={onBack}><span className="brand-mark">b</span><span>biz track admin</span></button><nav aria-label="Admin navigation"><p className="nav-label">ADMIN</p><button className="nav-item" onClick={onBack}><span className="nav-icon">◈</span>Overview</button><button className="nav-item" onClick={() => window.history.pushState({}, '', '/admin/businesses/')}><span className="nav-icon">◈</span>Business accounts</button><button className="nav-item active" onClick={() => undefined}><span className="nav-icon">KES</span>Subscriptions</button><button className="nav-item" onClick={() => window.history.pushState({}, '', '/admin/settings/')}><span className="nav-icon">⚙</span>Platform settings</button><button className="nav-item" onClick={() => window.history.pushState({}, '', '/signin/')}><span className="nav-icon">↪</span>Sign out</button></nav></aside><main className="main-content"><header className="topbar"><div className="breadcrumbs"><span>Admin portal</span><b>/</b><strong>Subscriptions</strong></div></header><div className="page-content"><PageHeading eyebrow="SITE ADMIN / BILLING" title="Subscription management" subtitle="Update the plan, seats, billing date, and account status for each workspace." /><article className="panel team-panel"><div className="table-wrap"><table><thead><tr><th>BUSINESS</th><th>PLAN</th><th>SEATS</th><th>NEXT BILLING</th><th>STATUS</th><th>ACTION</th></tr></thead><tbody>{accounts.map((account) => <tr key={account.id}><td><strong>{account.businessName}</strong><small>{account.ownerName}</small></td><td><select value={account.plan} onChange={(event) => onUpdate(account.id, { plan: event.target.value as SubscriptionPlan })}><option>Starter</option><option>Growth</option><option>Scale</option></select></td><td><input type="number" min="1" value={account.seats} onChange={(event) => onUpdate(account.id, { seats: Number(event.target.value) || account.seats })} /></td><td><input type="date" value={account.nextBilling} onChange={(event) => onUpdate(account.id, { nextBilling: event.target.value })} /></td><td><select value={account.status} onChange={(event) => onUpdate(account.id, { status: event.target.value as SubscriptionStatus })}><option>Trial</option><option>Active</option><option>Paused</option><option>Canceled</option></select></td><td><button type="button" className="secondary-button" onClick={() => onUpdate(account.id, { status: 'Active', plan: account.plan })}>Apply</button></td></tr>)}</tbody></table></div></article><div className="form-actions"><button type="button" className="secondary-button" onClick={onBack}>Back</button></div></div></main></div>
 }
 
-function AdminPlatformSettingsShell({ activeNav, onNavigate, settings, onSave }: { activeNav: string; onNavigate: (page: string) => void; settings: PlatformSettings; onSave: (settings: PlatformSettings) => void }) {
-  return <div className="admin-shell"><AdminSidebar activeNav={activeNav} onNavigate={onNavigate} onSignOut={() => onNavigate('Welcome')} /><div className="admin-legacy-content"><PlatformSettingsPage activeNav={activeNav} onNavigate={onNavigate} settings={settings} onSave={onSave} /></div></div>
+function AdminPlatformSettingsShell({ activeNav, onNavigate, settings, siteAdminAccount, onSave }: { activeNav: string; onNavigate: (page: string) => void; settings: PlatformSettings; siteAdminAccount: OwnerAccount | null; onSave: (settings: PlatformSettings) => Promise<void> }) {
+  return <div className="admin-shell"><AdminSidebar activeNav={activeNav} onNavigate={onNavigate} onSignOut={() => onNavigate('Welcome')} /><div className="admin-legacy-content"><PlatformSettingsPage activeNav={activeNav} onNavigate={onNavigate} settings={settings} siteAdminAccount={siteAdminAccount} onSave={onSave} /></div></div>
 }
 
-function PlatformSettingsPage({ activeNav, onNavigate, onBack, settings, onSave }: { activeNav: string; onNavigate: (page: string) => void; onBack?: () => void; settings: PlatformSettings; onSave: (settings: PlatformSettings) => void }) {
+function PlatformSettingsPage({ activeNav, onNavigate, onBack, settings, siteAdminAccount, onSave }: { activeNav: string; onNavigate: (page: string) => void; onBack?: () => void; settings: PlatformSettings; siteAdminAccount: OwnerAccount | null; onSave: (settings: PlatformSettings) => Promise<void> }) {
   const [platformName, setPlatformName] = useState(settings.platformName)
   const [supportEmail, setSupportEmail] = useState(settings.supportEmail)
   const [whatsappNumber, setWhatsappNumber] = useState(settings.whatsappNumber)
   const [defaultPlan, setDefaultPlan] = useState(settings.defaultPlan)
   const [maintenanceMode, setMaintenanceMode] = useState(settings.maintenanceMode)
-  const save = () => {
+  const [saving, setSaving] = useState(false)
+  const save = async () => {
     const nextSettings = { platformName, supportEmail, whatsappNumber: whatsappNumber.replace(/[^0-9]/g, ''), defaultPlan, maintenanceMode }
-    localStorage.setItem('biztrack-whatsapp-number', nextSettings.whatsappNumber)
-    if (supabase) void supabase.from('platform_settings').upsert({ id: 1, platform_name: nextSettings.platformName, support_email: nextSettings.supportEmail, whatsapp_number: nextSettings.whatsappNumber, default_plan: nextSettings.defaultPlan, maintenance_mode: nextSettings.maintenanceMode })
-    onSave(nextSettings)
+    setSaving(true)
+    try { await onSave(nextSettings) } catch (saveError) { window.alert(saveError instanceof Error ? saveError.message : 'Could not save platform settings.') } finally { setSaving(false) }
   }
   useEffect(() => {
     const grid = document.querySelector('.page-content .member-form .form-grid')
