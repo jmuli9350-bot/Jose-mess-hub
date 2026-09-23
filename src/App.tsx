@@ -219,9 +219,9 @@ const canTransitionPaymentStatus = (currentStatus: PaymentStatus | undefined, ne
 type Role = 'Owner' | 'Manager' | 'Stock Keeper' | 'Cashier' | 'Worker'
 type AttendanceStatus = 'Present' | 'Late' | 'Early' | 'Absent' | 'Off'
 type PaymentStatus = 'Pending' | 'Paid' | 'On hold'
-type Member = { id: number; tenantId?: string; name: string; username: string; password: string; hasAccount?: boolean; biometricCredentialId?: string; phone: string; email: string; department: string; role: Role; initials: string; color: string; payRate: number; payFrequency: PayFrequency; signInTime: string; signOutTime: string }
+type Member = { id: number; tenantId?: string; name: string; username: string; password: string; hasAccount?: boolean; archived?: boolean; biometricCredentialId?: string; phone: string; email: string; department: string; role: Role; initials: string; color: string; payRate: number; payFrequency: PayFrequency; signInTime: string; signOutTime: string }
 type OwnerAccount = { name: string; username: string; password: string; business?: string; tenantId?: string; phone?: string; industry?: string; plan?: SubscriptionPlan }
-type AttendanceEntry = { memberId: number; date: string; status: AttendanceStatus; checkIn: string; checkOut: string; paymentStatus?: PaymentStatus; biometricProof?: { action: string; verifiedAt: string; credentialId: string } }
+type AttendanceEntry = { memberId: number; date: string; status: AttendanceStatus; checkIn: string; checkOut: string; workerName?: string; workerDepartment?: string; payRate?: number; paymentStatus?: PaymentStatus; biometricProof?: { action: string; verifiedAt: string; credentialId: string } }
 type PaymentMethod = 'Cash' | 'Credit' | 'Mobile money'
 type Sale = { id: number; amount: number; paymentMethod: PaymentMethod; date: string; time: string; cashier: string }
 type InventoryItem = { id: number; name: string; category: string; quantity: number; initialQuantity?: number; unit: string; reorderAt: number }
@@ -875,13 +875,17 @@ function App() {
       }
     }
     let biometricProof
-    if (status === 'Present' && biometricEnabled) {
+    const actionBiometricEnabled = activeNav === 'Worker sign-in' ? biometricSignIn : biometricEnabled
+    if (status === 'Present' && actionBiometricEnabled) {
       if (!(await requireBiometric(memberId, true, biometricAction))) return false
       biometricProof = await recordBiometricProof(memberId, 'mark')
     }
     const nextEntry = {
       memberId,
       date: today,
+      workerName: member?.name,
+      workerDepartment: member?.department,
+      payRate: member?.payRate,
       status: status === 'Present' ? (timeToMinutes(new Date().toTimeString().slice(0, 5)) > timeToMinutes(defaultSignIn) ? 'Late' as AttendanceStatus : 'Present' as AttendanceStatus) : 'Absent' as AttendanceStatus,
       checkIn: status === 'Present' ? new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
       checkOut: '—',
@@ -909,7 +913,7 @@ function App() {
     }
     const checkOut = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     const checkoutStatus = timeToMinutes(new Date().toTimeString().slice(0, 5)) < timeToMinutes(defaultSignOut) ? 'Early' as AttendanceStatus : entry.status
-    setAttendance((current) => current.map((item) => item.memberId === memberId && item.date === today ? { ...item, status: checkoutStatus, checkOut, biometricProof: biometricProof || item.biometricProof } : item))
+    setAttendance((current) => current.map((item) => item.memberId === memberId && item.date === today ? { ...item, status: checkoutStatus, checkOut, workerName: item.workerName || member?.name, workerDepartment: item.workerDepartment || member?.department, payRate: item.payRate ?? member?.payRate, biometricProof: biometricProof || item.biometricProof } : item))
     markChanged()
     if (!(window as any).__bulkAttendanceInProgress) showAttendanceNotice(`${member?.name || 'This worker'} signed out successfully`)
     return true
@@ -1352,7 +1356,17 @@ function App() {
     if (!nextName || departmentList.some((department) => department.toLowerCase() === nextName.toLowerCase())) return
     setDepartmentList((current) => [...current, nextName]); markChanged()
   }
+  const renameDepartment = (currentName: string, nextName: string) => {
+    const normalizedName = nextName.trim()
+    if (!normalizedName || departmentList.some((department) => department !== currentName && department.toLowerCase() === normalizedName.toLowerCase())) return false
+    setDepartmentList((current) => current.map((department) => department === currentName ? normalizedName : department))
+    setMembers((current) => current.map((member) => member.department === currentName ? { ...member, department: normalizedName } : member))
+    markChanged()
+    return true
+  }
   ;(window as any).__biztrackAddDepartment = addDepartment
+  ;(window as any).__biztrackRenameDepartment = renameDepartment
+  ;(window as any).__biztrackUpdateMember = updateMember
   const deleteDepartment = async (name: string) => {
     if (!await showBusinessConfirm(workspaceName || ownerAccount?.business || 'Your business', `Delete the ${name} department?`)) return
     setDepartmentList((current) => current.filter((department) => department !== name)); markChanged()
@@ -1366,7 +1380,7 @@ function App() {
   const addExpense = (expense: Expense) => { setExpenses((current) => [expense, ...current]); setStockMovements((current) => [{ ...expense, type: 'Used' }, ...current]); setInventory((current) => current.map((item) => item.id === expense.inventoryItemId ? { ...item, quantity: Math.max(0, item.quantity - expense.quantity) } : item)); markChanged(); setAttendanceNotice(`${expense.itemName} usage recorded successfully`); navigate('Overview') }
   const deleteMember = async (id: number) => {
     const member = members.find((item) => item.id === id)
-    if (!member || !await showBusinessConfirm(workspaceName || ownerAccount?.business || 'Your business', `Delete ${member.name} from the team?`)) return
+    if (!member) return
     if (supabase && tenantId) {
       const cleanup = ownerAccount
         ? supabase.rpc('delete_owner_biometric_credential', { requested_tenant_id: tenantId, requested_username: ownerAccount.username, requested_password: ownerAccount.password, requested_member_id: id })
@@ -1374,8 +1388,9 @@ function App() {
       const { error } = await cleanup
       if (error) { setAttendanceNotice(`Could not remove ${member.name}'s biometric record. Run the latest Supabase SQL, then try again.`); return }
     }
-    setMembers((current) => current.filter((item) => item.id !== id)); markChanged()
+    setMembers((current) => current.map((item) => item.id === id ? { ...item, archived: true, hasAccount: false } : item)); markChanged()
   }
+  const updateMember = (id: number, updates: Partial<Member>) => { setMembers((current) => current.map((member) => member.id === id ? { ...member, ...updates, id: member.id } : member)); markChanged() }
   const setMemberCredentials = async (memberId: number, username: string, password: string) => {
     const passwordHash = await hashPassword(password)
     const currentMember = members.find((member) => member.id === memberId)
@@ -1471,7 +1486,18 @@ function AttendancePage({ members, entries, setMembers, onChange }: { members: M
 
 function ExistingAccountTeamPage({ members, onProceed, onBack }: { members: Member[]; onProceed: (id: number) => void; onBack: () => void }) { const accountMembers = members.filter((member) => member.hasAccount === true && Boolean(member.username?.trim() && member.password?.trim())); const [selectedId, setSelectedId] = useState<number | null>(null); return <><PageHeading eyebrow="PEOPLE / TEAM" title="Select an account" subtitle="Choose one existing team member to give workspace access." action={<button className="secondary-button" onClick={onBack}>Back to permissions</button>} /><article className="panel team-panel account-selection-panel"><PanelHeading title="Existing account holders" subtitle="Only one account can be selected." /><div className="table-wrap"><table className="team-members-table"><thead><tr><th>SELECT</th><th>WORKER ID</th><th>TEAM MEMBER</th><th>PHONE</th><th>ID NUMBER</th><th>DEPARTMENT</th></tr></thead><tbody>{accountMembers.map((member) => <tr key={member.id}><td><input type="radio" name="existing-account" checked={selectedId === member.id} onChange={() => setSelectedId(member.id)} aria-label={`Select ${member.name}`} /></td><td><strong>#{member.id}</strong></td><td><div className="person-cell"><span className={`avatar avatar-${member.color}`}>{member.initials}</span><strong>{member.name}</strong></div></td><td>{member.phone}</td><td>#{member.id}</td><td>{member.department}</td></tr>)}</tbody></table></div><div className="team-panel-footer"><button className="primary-button" disabled={!selectedId} onClick={() => selectedId && onProceed(selectedId)}>Proceed</button></div></article></> }
 
-function TeamPage({ members, onAdd, onDelete }: { members: Member[]; onAdd: () => void; onDelete: (id: number) => void }) { const [selectedDepartment, setSelectedDepartment] = useState('All departments'); const departmentOptions = ['All departments', ...Array.from(new Set(members.map((member) => member.department)))]; const visibleMembers = selectedDepartment === 'All departments' ? members : members.filter((member) => member.department === selectedDepartment); return <><PageHeading eyebrow="PEOPLE / TEAM" title="Your team" subtitle="Manage members and keep everyone connected to the right department." /><article className="panel team-panel"><PanelHeading title={`${visibleMembers.length} team members`} subtitle="Contact details and current assignments" action={<select className="filter-button" value={selectedDepartment} onChange={(event) => setSelectedDepartment(event.target.value)}>{departmentOptions.map((department) => <option key={department}>{department}</option>)}</select>} /><div className="table-wrap"><table className="team-members-table"><thead><tr><th>WORKER ID</th><th>TEAM MEMBER</th><th>PHONE</th><th>ID NUMBER</th><th>DEPARTMENT</th><th>ACTION</th></tr></thead><tbody>{visibleMembers.map((member) => <tr key={member.id}><td><strong>#{member.id}</strong></td><td><div className="person-cell"><span className={`avatar avatar-${member.color}`}>{member.initials}</span><strong>{member.name}</strong></div></td><td>{member.phone}</td><td>#{member.id}</td><td>{member.department}</td><td><button className="delete-button" aria-label={`Delete ${member.name}`} onClick={() => onDelete(member.id)}>×</button></td></tr>)}</tbody></table></div><div className="team-panel-footer"><button className="primary-button" onClick={onAdd}><span>＋</span> Add member</button></div></article></> }
+function TeamPage({ members, onAdd, onDelete }: { members: Member[]; onAdd: () => void; onDelete: (id: number) => void }) {
+  const [selectedDepartment, setSelectedDepartment] = useState('All departments')
+  const [editing, setEditing] = useState<Member | null>(null)
+  const [deleting, setDeleting] = useState<Member | null>(null)
+  const [confirmations, setConfirmations] = useState(['', '', ''])
+  const activeMembers = members.filter((member) => !member.archived)
+  const departmentOptions = ['All departments', ...Array.from(new Set(activeMembers.map((member) => member.department)))]
+  const visibleMembers = selectedDepartment === 'All departments' ? activeMembers : activeMembers.filter((member) => member.department === selectedDepartment)
+  const saveEdit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!editing) return; const form = new FormData(event.currentTarget); ;(window as any).__biztrackUpdateMember?.(editing.id, { name: String(form.get('name') || '').trim(), phone: String(form.get('phone') || '').trim(), email: String(form.get('email') || '').trim(), department: String(form.get('department') || 'Unassigned'), payRate: Number(form.get('payRate') || 0), payFrequency: String(form.get('payFrequency') || 'Daily') as PayFrequency, signInTime: String(form.get('signInTime') || editing.signInTime), signOutTime: String(form.get('signOutTime') || editing.signOutTime), initials: initialsFor(String(form.get('name') || editing.name)) }); setEditing(null) }
+  const confirmDelete = () => { if (!deleting || confirmations.some((value) => value.trim().toLowerCase() !== deleting.name.trim().toLowerCase())) return; onDelete(deleting.id); setDeleting(null); setConfirmations(['', '', '']) }
+  return <><PageHeading eyebrow="PEOPLE / TEAM" title="Your team" subtitle="Manage members and keep everyone connected to the right department." /><article className="panel team-panel"><PanelHeading title={`${visibleMembers.length} team members`} subtitle="Contact details and current assignments" action={<select className="filter-button" value={selectedDepartment} onChange={(event) => setSelectedDepartment(event.target.value)}>{departmentOptions.map((department) => <option key={department}>{department}</option>)}</select>} /><div className="table-wrap"><table className="team-members-table"><thead><tr><th>WORKER ID</th><th>TEAM MEMBER</th><th>PHONE</th><th>ID NUMBER</th><th>DEPARTMENT</th><th>ACTIONS</th></tr></thead><tbody>{visibleMembers.map((member) => <tr key={member.id}><td><strong>#{member.id}</strong></td><td><div className="person-cell"><span className={`avatar avatar-${member.color}`}>{member.initials}</span><strong>{member.name}</strong></div></td><td>{member.phone}</td><td>#{member.id}</td><td>{member.department}</td><td><div className="team-actions"><button className="table-action" type="button" onClick={() => setEditing(member)}>Edit</button><button className="delete-button" aria-label={`Delete ${member.name}`} onClick={() => setDeleting(member)}>×</button></div></td></tr>)}</tbody></table></div><div className="team-panel-footer"><button className="primary-button" onClick={onAdd}><span>＋</span> Add member</button></div></article>{editing && <div className="admin-modal-backdrop"><form className="admin-modal member-form" onSubmit={saveEdit}><button className="admin-modal-close" type="button" onClick={() => setEditing(null)}>×</button><h2>Edit worker</h2><p className="admin-modal-user"><span>Worker ID cannot be changed</span>#{editing.id}</p><div className="form-grid"><label><span>Name</span><input name="name" defaultValue={editing.name} required /></label><label><span>Phone</span><input name="phone" defaultValue={editing.phone} required /></label><label><span>Email</span><input name="email" defaultValue={editing.email} /></label><label><span>Department</span><input name="department" defaultValue={editing.department} required /></label><label><span>Pay rate</span><input name="payRate" type="number" min="0" step="0.01" defaultValue={editing.payRate} required /></label><label><span>Pay frequency</span><select name="payFrequency" defaultValue={editing.payFrequency}><option>Daily</option><option>Weekly</option><option>Monthly</option></select></label></div><div className="form-actions"><button type="button" className="secondary-button" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="primary-button">Save worker</button></div></form></div>}{deleting && <div className="admin-modal-backdrop"><section className="admin-modal member-form"><button className="admin-modal-close" type="button" onClick={() => setDeleting(null)}>×</button><h2>Delete worker</h2><p>Type <strong>{deleting.name}</strong> three times to permanently remove this worker. Existing attendance and payroll records will remain available in Print.</p>{confirmations.map((value, index) => <label className="login-field" key={index}><span>Confirmation {index + 1}</span><input value={value} onChange={(event) => setConfirmations((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} /></label>)}<div className="form-actions"><button type="button" className="secondary-button" onClick={() => setDeleting(null)}>Cancel</button><button type="button" className="primary-button delete-confirm-button" disabled={confirmations.some((value) => value.trim().toLowerCase() !== deleting.name.trim().toLowerCase())} onClick={confirmDelete}>Delete worker</button></div></section></div>}</>
+}
 
 function PayrollPage({ members, attendance, onUpdateStatus, onVerifyPayment }: { members: Member[]; attendance: AttendanceEntry[]; onUpdateStatus?: (memberIds: number[], startDate: string, endDate: string, status: PaymentStatus) => void; onVerifyPayment?: (memberId: number) => Promise<boolean> }) {
   const [period, setPeriod] = useState('today')
@@ -1626,8 +1652,9 @@ function ExpensesPage({ expenses, inventory, onAdd }: { expenses: Expense[]; inv
 
 function DepartmentsPage({ departments, members, onAdd, onDelete }: { departments: string[]; members: Member[]; onAdd: (name: string) => void; onDelete: (name: string) => void }) {
   const [name, setName] = useState('')
+  const [editing, setEditing] = useState<string | null>(null)
   const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const nextName = name.trim(); if (!nextName) return; (window as any).__biztrackAddDepartment?.(nextName); setName('') }
-  return <><PageHeading eyebrow="WORKSPACE / ORGANIZATION" title="Departments" subtitle="Organize your team and see where every employee is assigned." /><section className="settings-stack"><form className="panel member-form" onSubmit={submit}><PanelHeading title="Add a department" subtitle="Create departments here and assign team members from their profiles." /><div className="form-grid"><label><span>Department name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Customer service" required /></label><div className="form-actions"><button className="primary-button" type="submit"><span>＋</span> Add department</button></div></div></form><article className="panel department-panel"><PanelHeading title={`${departments.length} departments`} subtitle="Available departments in this workspace" /><div className="department-grid">{departments.map((department, index) => <div className="department-card" key={department}><div className={`department-icon department-icon-${index % 4}`}>▦</div><div className="department-card-copy"><h3>{department}</h3><p>{members.filter((member) => member.department === department).length} team members</p></div><button className="delete-button" aria-label={`Delete ${department}`} onClick={() => onDelete(department)}>×</button></div>)}</div></article></section></>
+  return <><PageHeading eyebrow="WORKSPACE / ORGANIZATION" title="Departments" subtitle="Organize your team and see where every employee is assigned." /><section className="settings-stack"><form className="panel member-form" onSubmit={submit}><PanelHeading title="Add a department" subtitle="Create departments here and assign team members from their profiles." /><div className="form-grid"><label><span>Department name</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Customer service" required /></label><div className="form-actions"><button className="primary-button" type="submit"><span>＋</span> Add department</button></div></div></form><article className="panel department-panel"><PanelHeading title={`${departments.length} departments`} subtitle="Available departments in this workspace" /><div className="department-grid">{departments.map((department, index) => <div className="department-card" key={department}><div className={`department-icon department-icon-${index % 4}`}>▦</div><div className="department-card-copy"><h3>{editing === department ? <input className="department-edit-input" defaultValue={department} onKeyDown={(event) => { if (event.key === 'Enter') { const input = event.currentTarget; if ((window as any).__biztrackRenameDepartment?.(department, input.value)) setEditing(null) } }} /> : department}</h3><p>{members.filter((member) => member.department === department).length} team members</p></div>{editing === department ? <button className="table-action" type="button" onClick={(event) => { const input = (event.currentTarget.parentElement?.querySelector('input') as HTMLInputElement | null); if (input && (window as any).__biztrackRenameDepartment?.(department, input.value)) setEditing(null) }}>Save</button> : <button className="table-action" type="button" onClick={() => setEditing(department)}>Edit</button>}<button className="delete-button" aria-label={`Delete ${department}`} onClick={() => onDelete(department)}>×</button></div>)}</div></article></section></>
 }
 
 function AddDepartmentPage({ onSubmit, onCancel }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; onCancel: () => void }) { return <><PageHeading eyebrow="WORKSPACE / ORGANIZATION" title="Add a department" subtitle="Create a department to make team assignments easier to manage." /><form className="panel member-form" onSubmit={onSubmit}><div className="form-heading"><div><h2>Department details</h2><p>Give the department a clear name your team will recognize.</p></div><span className="required-note">* Required</span></div><div className="form-grid single-field"><label><span>Department name <b>*</b></span><input name="departmentName" placeholder="e.g. Customer service" required /></label></div><div className="form-actions"><button type="button" className="secondary-button" onClick={onCancel}>Cancel</button><button type="submit" className="primary-button"><span>＋</span> Add department</button></div></form></> }
@@ -1845,7 +1872,7 @@ function PayrollPrintReport({ businessName, members, attendance, deductions, cur
   const payrollWorkers = members.map((member) => {
     const earnings = completedShifts.filter((entry) => entry.memberId === member.id)
     const workerDeductions = deductions.filter((deduction) => deduction.memberId === member.id && deduction.date >= exportStart && deduction.date <= exportEnd)
-    const gross = earnings.length * member.payRate
+    const gross = earnings.reduce((sum, entry) => sum + (entry.payRate ?? member.payRate), 0)
     const deducted = workerDeductions.reduce((sum, deduction) => sum + deduction.amount, 0)
     return { member, earnings, deductions: workerDeductions, gross, deducted, net: Math.max(0, gross - deducted) }
   }).filter((worker) => worker.earnings.length > 0)
