@@ -1366,7 +1366,6 @@ function App() {
   }
   ;(window as any).__biztrackAddDepartment = addDepartment
   ;(window as any).__biztrackRenameDepartment = renameDepartment
-  ;(window as any).__biztrackUpdateMember = updateMember
   const deleteDepartment = async (name: string) => {
     if (!await showBusinessConfirm(workspaceName || ownerAccount?.business || 'Your business', `Delete the ${name} department?`)) return
     setDepartmentList((current) => current.filter((department) => department !== name)); markChanged()
@@ -1391,6 +1390,7 @@ function App() {
     setMembers((current) => current.map((item) => item.id === id ? { ...item, archived: true, hasAccount: false } : item)); markChanged()
   }
   const updateMember = (id: number, updates: Partial<Member>) => { setMembers((current) => current.map((member) => member.id === id ? { ...member, ...updates, id: member.id } : member)); markChanged() }
+  ;(window as any).__biztrackUpdateMember = updateMember
   const setMemberCredentials = async (memberId: number, username: string, password: string) => {
     const passwordHash = await hashPassword(password)
     const currentMember = members.find((member) => member.id === memberId)
