@@ -393,6 +393,7 @@ type WorkspaceSnapshot = {
   biometricSignIn: boolean
   biometricSignOut: boolean
   biometricMark: boolean
+  biometricPayroll: boolean
   defaultSignIn: string
   defaultSignOut: string
   lateSignIn: string
@@ -468,6 +469,7 @@ function App() {
       const [biometricSignIn, setBiometricSignIn] = useState(false)
       const [biometricSignOut, setBiometricSignOut] = useState(false)
       const [biometricMark, setBiometricMark] = useState(false)
+      const [biometricPayroll, setBiometricPayroll] = useState(false)
   const [defaultSignIn, setDefaultSignIn] = useState('08:00')
   const [defaultSignOut, setDefaultSignOut] = useState('17:00')
   const [lateSignIn, setLateSignIn] = useState('08:00')
@@ -732,6 +734,7 @@ function App() {
         if (snapshot.biometricSignIn !== undefined) setBiometricSignIn(snapshot.biometricSignIn)
         if (snapshot.biometricSignOut !== undefined) setBiometricSignOut(snapshot.biometricSignOut)
         if (snapshot.biometricMark !== undefined) setBiometricMark(snapshot.biometricMark)
+        if (snapshot.biometricPayroll !== undefined) setBiometricPayroll(snapshot.biometricPayroll)
         if (snapshot.defaultSignIn) setDefaultSignIn(snapshot.defaultSignIn)
         if (snapshot.defaultSignOut) setDefaultSignOut(snapshot.defaultSignOut)
         if (snapshot.lateSignIn) setLateSignIn(snapshot.lateSignIn)
@@ -745,7 +748,7 @@ function App() {
   }, [tenantId])
   useEffect(() => {
     if (!startupReady || loadedTenantId !== tenantId || !remoteWorkspaceLoaded || !supabaseReady || !isSupabaseConfigured || !supabase || tenantId === 'workspace') return
-    const snapshot: WorkspaceSnapshot = { members: members.map(({ biometricCredentialId: _biometricCredentialId, ...member }) => member), departmentList, attendance, sales, salesHistory, deductions, expenses, stockMovements, inventory, storeCategories, categoryUnits, categoryThresholds, workspaceName, currency, paymentMethods, strictSignIn, allowMultipleDailyShifts, biometricSignIn, biometricSignOut, biometricMark, defaultSignIn, defaultSignOut, lateSignIn, earlySignOut, accessByMember }
+    const snapshot: WorkspaceSnapshot = { members: members.map(({ biometricCredentialId: _biometricCredentialId, ...member }) => member), departmentList, attendance, sales, salesHistory, deductions, expenses, stockMovements, inventory, storeCategories, categoryUnits, categoryThresholds, workspaceName, currency, paymentMethods, strictSignIn, allowMultipleDailyShifts, biometricSignIn, biometricSignOut, biometricMark, biometricPayroll, defaultSignIn, defaultSignOut, lateSignIn, earlySignOut, accessByMember }
     const version = workspaceSaveVersion.current + 1
     workspaceSaveVersion.current = version
     if (workspaceSaveTimer.current !== null) window.clearTimeout(workspaceSaveTimer.current)
@@ -756,7 +759,7 @@ function App() {
       }).catch((error) => console.error('Workspace snapshot save failed', error))
     }, 250)
     return () => { if (workspaceSaveTimer.current !== null) { window.clearTimeout(workspaceSaveTimer.current); workspaceSaveTimer.current = null } }
-  }, [members, departmentList, attendance, sales, salesHistory, deductions, expenses, stockMovements, inventory, storeCategories, categoryUnits, categoryThresholds, workspaceName, currency, paymentMethods, defaultSignIn, defaultSignOut, lateSignIn, earlySignOut, strictSignIn, allowMultipleDailyShifts, biometricSignIn, biometricSignOut, biometricMark, role, sessionMemberId, accessByMember, ownerAccount, tenantId, loadedTenantId, remoteWorkspaceLoaded, siteAdminAccount, siteAdminSession, businessAccounts, registrationRequests, activationCodes, packages, supabaseReady, startupReady])
+  }, [members, departmentList, attendance, sales, salesHistory, deductions, expenses, stockMovements, inventory, storeCategories, categoryUnits, categoryThresholds, workspaceName, currency, paymentMethods, defaultSignIn, defaultSignOut, lateSignIn, earlySignOut, strictSignIn, allowMultipleDailyShifts, biometricSignIn, biometricSignOut, biometricMark, biometricPayroll, role, sessionMemberId, accessByMember, ownerAccount, tenantId, loadedTenantId, remoteWorkspaceLoaded, siteAdminAccount, siteAdminSession, businessAccounts, registrationRequests, activationCodes, packages, supabaseReady, startupReady])
 
   const todayAttendance = useMemo(() => members.map((member) => attendance.find((entry) => entry.memberId === member.id && entry.date === today) || { memberId: member.id, date: today, status: 'Absent' as AttendanceStatus, checkIn: '—', checkOut: '—' }), [members, attendance])
   const markChanged = () => undefined
@@ -836,7 +839,7 @@ function App() {
   const hasAttendanceForToday = (memberId: number) => attendance.some((entry) => entry.memberId === memberId && entry.date === today && (entry.checkIn !== '—' || entry.status === 'Present' || entry.status === 'Late' || entry.checkOut !== '—'))
   const markMemberAttendance = async (memberId: number, status: 'Present' | 'Absent') => {
     if (status === 'Present' && (window as any).__biometricAttendanceMember !== memberId) {
-      const verified = await requireBiometric(memberId, true, 'Mark attendance')
+      const verified = await requireBiometric(memberId, biometricMark, 'Mark attendance')
       if (!verified) return false
       ;(window as any).__biometricAttendanceMember = memberId
       ;(window as any).__biometricAttendanceProof = await recordBiometricProof(memberId, 'mark')
@@ -880,7 +883,7 @@ function App() {
   }
   const markMemberSignOut = async (memberId: number) => {
     if ((window as any).__biometricSignOutMember !== memberId) {
-      const verified = await requireBiometric(memberId, true, 'Sign out')
+      const verified = await requireBiometric(memberId, biometricSignOut, 'Sign out')
       if (!verified) return false
       ;(window as any).__biometricSignOutMember = memberId
       ;(window as any).__biometricSignOutProof = await recordBiometricProof(memberId, 'sign-out')
@@ -1035,16 +1038,16 @@ function App() {
     navigate(firstAssignedPage || 'Overview', memberId)
   }
   const gatedMarkMemberAttendance = async (memberId: number, status: 'Present' | 'Absent') => {
-    if (status === 'Present' && !(await requireBiometric(memberId, true, 'Mark attendance'))) return false
+    if (status === 'Present' && !(await requireBiometric(memberId, biometricSignIn, 'Sign in'))) return false
     return markMemberAttendance(memberId, status)
   }
   const gatedMarkMemberSignOut = async (memberId: number) => {
-    if (!(await requireBiometric(memberId, true, 'Sign out'))) return false
+    if (!(await requireBiometric(memberId, biometricSignOut, 'Sign out'))) return false
     return markMemberSignOut(memberId)
   }
   const verifyPayrollPayment = async (memberId: number) => {
-    if (!(await requireBiometric(memberId, true, 'mark payment as paid'))) return false
-    await recordBiometricProof(memberId, 'payroll')
+    if (!(await requireBiometric(memberId, biometricPayroll, 'mark payment as paid'))) return false
+    if (biometricPayroll) await recordBiometricProof(memberId, 'payroll')
     return true
   }
   ;(window as any).__biztrackVerifyPayrollPayment = verifyPayrollPayment
@@ -1079,6 +1082,7 @@ function App() {
       if (remoteSnapshot.biometricSignIn !== undefined) setBiometricSignIn(remoteSnapshot.biometricSignIn)
       if (remoteSnapshot.biometricSignOut !== undefined) setBiometricSignOut(remoteSnapshot.biometricSignOut)
       if (remoteSnapshot.biometricMark !== undefined) setBiometricMark(remoteSnapshot.biometricMark)
+      if (remoteSnapshot.biometricPayroll !== undefined) setBiometricPayroll(remoteSnapshot.biometricPayroll)
       if (remoteSnapshot.defaultSignIn) setDefaultSignIn(remoteSnapshot.defaultSignIn)
       if (remoteSnapshot.defaultSignOut) setDefaultSignOut(remoteSnapshot.defaultSignOut)
       if (remoteSnapshot.lateSignIn) setLateSignIn(remoteSnapshot.lateSignIn)
@@ -1291,16 +1295,16 @@ function App() {
     if (!settings || settings.querySelector('.biometric-policy-panel')) return
     const panel = document.createElement('article')
     panel.className = 'panel member-form biometric-policy-panel'
-    panel.innerHTML = `<div class="panel-heading"><div><h2>Biometric verification</h2><p>Choose which worker actions require the worker's registered device biometric.</p></div></div><div class="settings-choice-grid"><label class="settings-choice biometric-choice"><input type="checkbox" data-biometric="sign-in"><span>Worker sign-in</span></label><label class="settings-choice biometric-choice"><input type="checkbox" data-biometric="sign-out"><span>Worker sign-out</span></label><label class="settings-choice biometric-choice"><input type="checkbox" data-biometric="mark"><span>Mark selected workers</span></label></div><p class="subheading">Biometrics use your browser's secure WebAuthn prompt. Raw fingerprint data never enters Biz Track.</p>`
+    panel.innerHTML = `<div class="panel-heading"><div><h2>Biometric verification</h2><p>Choose which worker actions require the worker's registered device biometric.</p></div></div><div class="settings-choice-grid"><label class="settings-choice biometric-choice"><input type="checkbox" data-biometric="sign-in"><span>Worker sign-in</span></label><label class="settings-choice biometric-choice"><input type="checkbox" data-biometric="sign-out"><span>Worker sign-out</span></label><label class="settings-choice biometric-choice"><input type="checkbox" data-biometric="mark"><span>Mark selected workers</span></label><label class="settings-choice biometric-choice"><input type="checkbox" data-biometric="payroll"><span>Payroll payment</span></label></div><p class="subheading">Biometrics use your browser's secure WebAuthn prompt. Raw fingerprint data never enters Biz Track.</p>`
     settings.appendChild(panel)
     const controls = panel.querySelectorAll<HTMLInputElement>('input[data-biometric]')
     controls.forEach((control) => {
       const key = control.dataset.biometric
-      control.checked = key === 'sign-in' ? biometricSignIn : key === 'sign-out' ? biometricSignOut : biometricMark
-      control.addEventListener('change', () => { if (key === 'sign-in') setBiometricSignIn(control.checked); if (key === 'sign-out') setBiometricSignOut(control.checked); if (key === 'mark') setBiometricMark(control.checked); markChanged() })
+      control.checked = key === 'sign-in' ? biometricSignIn : key === 'sign-out' ? biometricSignOut : key === 'mark' ? biometricMark : biometricPayroll
+      control.addEventListener('change', () => { if (key === 'sign-in') setBiometricSignIn(control.checked); if (key === 'sign-out') setBiometricSignOut(control.checked); if (key === 'mark') setBiometricMark(control.checked); if (key === 'payroll') setBiometricPayroll(control.checked); markChanged() })
     })
     return () => panel.remove()
-  }, [activeNav, biometricSignIn, biometricSignOut, biometricMark])
+  }, [activeNav, biometricSignIn, biometricSignOut, biometricMark, biometricPayroll])
   /*
     <main className="main-content"><header className="topbar"><div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{activeNav}</strong></div><div className="top-actions"><div className={`sync-status ${isOnline ? 'online' : 'offline'}`}><span className="status-dot"></span>{syncLabel}</div><button className="icon-button" aria-label="Notifications">♧<span className="notification-dot"></span></button><div className="profile-menu"><div className="avatar avatar-olive">KA</div><span><strong>{sessionMemberId === 0 ? 'Kemi A.' : members.find((member) => member.id === sessionMemberId)?.name || 'Worker'}</strong><small>{sessionMemberId === 0 ? role : 'Worker'}</small></span><button className="text-button" onClick={logout}>Log out</button></div></div></header><div className="page-content">{activeNav === 'Login' ? <LoginPage members={members} onLogin={login} /> : !canAccess(activeNav) ? <AccessDeniedPage onBack={() => navigate('Overview')} /> : activeNav === 'Attendance' ? <AttendancePage members={members} entries={todayAttendance} /> : activeNav === 'Departments' ? <DepartmentsPage departments={departmentList} members={members} onAdd={() => navigate('Add department')} onDelete={deleteDepartment} /> : activeNav === 'Add department' ? <AddDepartmentPage onSubmit={addDepartment} onCancel={() => navigate('Departments')} /> : activeNav === 'Add member' ? <AddMemberPage departments={departmentList} defaultSignIn={defaultSignIn} defaultSignOut={defaultSignOut} onSubmit={addMember} onCancel={() => navigate('Team')} /> : activeNav === 'Team' ? <TeamPage members={members} onAdd={() => navigate('Add member')} onDelete={deleteMember} /> : activeNav === 'Payroll' ? <PayrollPage members={members} attendance={attendance} /> : activeNav === 'Sales' ? <SalesPage sales={sales} salesHistory={salesHistory} onAdd={addSale} onReset={resetSales} /> : activeNav === 'Inventory' ? <InventoryPage inventory={inventory} categories={storeCategories} onAdd={addInventoryItem} onAdjust={updateInventoryQuantity} /> : activeNav === 'Settings' ? <SettingsPage members={members} defaultSignIn={defaultSignIn} defaultSignOut={defaultSignOut} strictSignIn={strictSignIn} setStrictSignIn={setStrictSignIn} categories={storeCategories} setCategories={setStoreCategories} setDefaultSignIn={setDefaultSignIn} setDefaultSignOut={setDefaultSignOut} setMembers={setMembers} onChange={markChanged} /> : activeNav === 'Worker sign-in' ? <WorkerSignInPage members={members} entries={attendance} strictSignIn={strictSignIn} defaultSignIn={defaultSignIn} onAttendance={toggleCurrentAttendance} onMarkAttendance={markMemberAttendance} onMarkSignOut={markMemberSignOut} /> : <OverviewPage role={role} setRole={setRole} members={members} isCheckedIn={isCheckedIn} setIsCheckedIn={toggleCurrentAttendance} isOnline={isOnline} onAttendance={() => navigate('Attendance')} />}</div></main>
   */
@@ -1320,7 +1324,7 @@ function App() {
     const id = Date.now()
     const passwordHash = await hashPassword(password)
     let biometricCredentialId = ''
-    const biometricRequired = biometricSignIn || biometricSignOut || biometricMark
+    const biometricRequired = biometricSignIn || biometricSignOut || biometricMark || biometricPayroll
     if (biometricRequired) {
       try {
         biometricCredentialId = await registerBiometric(id, name, workspaceName || ownerAccount?.business || 'your business', tenantId, ownerAccount ? { username: ownerAccount.username, password: ownerAccount.password } : undefined)
