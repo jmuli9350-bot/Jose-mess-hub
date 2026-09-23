@@ -1320,10 +1320,13 @@ function App() {
     const id = Date.now()
     const passwordHash = await hashPassword(password)
     let biometricCredentialId = ''
-    try {
-      biometricCredentialId = await registerBiometric(id, name, workspaceName || ownerAccount?.business || 'your business', tenantId, ownerAccount ? { username: ownerAccount.username, password: ownerAccount.password } : undefined)
-      await saveBiometricRecord('biometric_credentials', { tenant_id: tenantId, member_id: id, member_name: name, credential_id: biometricCredentialId, registered_at: new Date().toISOString() }, ownerAccount ? { username: ownerAccount.username, password: ownerAccount.password } : undefined)
-    } catch (error) { setAttendanceNotice(error instanceof Error ? error.message : 'Biometric registration failed.'); return }
+    const biometricRequired = biometricSignIn || biometricSignOut || biometricMark
+    if (biometricRequired) {
+      try {
+        biometricCredentialId = await registerBiometric(id, name, workspaceName || ownerAccount?.business || 'your business', tenantId, ownerAccount ? { username: ownerAccount.username, password: ownerAccount.password } : undefined)
+        await saveBiometricRecord('biometric_credentials', { tenant_id: tenantId, member_id: id, member_name: name, credential_id: biometricCredentialId, registered_at: new Date().toISOString() }, ownerAccount ? { username: ownerAccount.username, password: ownerAccount.password } : undefined)
+      } catch (error) { setAttendanceNotice(error instanceof Error ? error.message : 'Biometric registration failed.'); return }
+    }
     setMembers((current) => [...current, { id, tenantId, name, username, password: passwordHash, hasAccount, biometricCredentialId, phone, email, department, role: 'Worker', initials: initialsFor(name), color: 'mint', payRate, payFrequency, signInTime, signOutTime }])
     markChanged(); event.currentTarget.reset(); navigate('Team')
   }
