@@ -219,7 +219,7 @@ const canTransitionPaymentStatus = (currentStatus: PaymentStatus | undefined, ne
 type Role = 'Owner' | 'Manager' | 'Stock Keeper' | 'Cashier' | 'Worker'
 type AttendanceStatus = 'Present' | 'Late' | 'Early' | 'Absent' | 'Off'
 type PaymentStatus = 'Pending' | 'Paid' | 'On hold'
-type Member = { id: number; tenantId?: string; name: string; username: string; password: string; hasAccount?: boolean; archived?: boolean; biometricCredentialId?: string; phone: string; email: string; department: string; role: Role; initials: string; color: string; payRate: number; payFrequency: PayFrequency; signInTime: string; signOutTime: string }
+type Member = { id: number; tenantId?: string; name: string; username: string; password: string; hasAccount?: boolean; archived?: boolean; scheduledUpdate?: { effectiveAt: string; changes: Partial<Member> }; biometricCredentialId?: string; phone: string; email: string; department: string; role: Role; initials: string; color: string; payRate: number; payFrequency: PayFrequency; signInTime: string; signOutTime: string }
 type OwnerAccount = { name: string; username: string; password: string; business?: string; tenantId?: string; phone?: string; industry?: string; plan?: SubscriptionPlan }
 type AttendanceEntry = { memberId: number; date: string; status: AttendanceStatus; checkIn: string; checkOut: string; workerName?: string; workerDepartment?: string; payRate?: number; paymentStatus?: PaymentStatus; biometricProof?: { action: string; verifiedAt: string; credentialId: string } }
 type PaymentMethod = 'Cash' | 'Credit' | 'Mobile money'
@@ -851,6 +851,8 @@ function App() {
   const hasAttendanceForToday = (memberId: number) => attendance.some((entry) => entry.memberId === memberId && entry.date === today && (entry.checkIn !== '—' || entry.status === 'Present' || entry.status === 'Late' || entry.checkOut !== '—'))
   const markMemberAttendance = async (memberId: number, status: 'Present' | 'Absent', biometricEnabled = biometricMark, biometricAction = 'Mark attendance') => {
     const member = members.find((person) => person.id === memberId)
+    const activeMember = member?.scheduledUpdate && member.scheduledUpdate.effectiveAt <= new Date().toISOString() ? { ...member, ...member.scheduledUpdate.changes, scheduledUpdate: undefined } : member
+    if (member && activeMember !== member) setMembers((current) => current.map((item) => item.id === memberId ? activeMember : item))
     const existing = attendance.find((entry) => entry.memberId === memberId && entry.date === today)
     if (existing?.status === 'Off') {
       showAttendanceNotice(`${member?.name || 'This worker'} is marked off for today.`)
@@ -883,9 +885,9 @@ function App() {
     const nextEntry = {
       memberId,
       date: today,
-      workerName: member?.name,
-      workerDepartment: member?.department,
-      payRate: member?.payRate,
+      workerName: activeMember?.name,
+      workerDepartment: activeMember?.department,
+      payRate: activeMember?.payRate,
       status: status === 'Present' ? (timeToMinutes(new Date().toTimeString().slice(0, 5)) > timeToMinutes(defaultSignIn) ? 'Late' as AttendanceStatus : 'Present' as AttendanceStatus) : 'Absent' as AttendanceStatus,
       checkIn: status === 'Present' ? new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—',
       checkOut: '—',
@@ -1389,7 +1391,15 @@ function App() {
     }
     setMembers((current) => current.map((item) => item.id === id ? { ...item, archived: true, hasAccount: false } : item)); markChanged()
   }
-  const updateMember = (id: number, updates: Partial<Member>) => { setMembers((current) => current.map((member) => member.id === id ? { ...member, ...updates, id: member.id } : member)); markChanged() }
+  const updateMember = (id: number, updates: Partial<Member> & { effectiveAt?: string }) => {
+    const { effectiveAt, ...changes } = updates
+    setMembers((current) => current.map((member) => {
+      if (member.id !== id) return member
+      if (effectiveAt && effectiveAt > new Date().toISOString()) return { ...member, scheduledUpdate: { effectiveAt, changes } }
+      return { ...member, ...changes, id: member.id, scheduledUpdate: undefined }
+    }))
+    markChanged()
+  }
   ;(window as any).__biztrackUpdateMember = updateMember
   const setMemberCredentials = async (memberId: number, username: string, password: string) => {
     const passwordHash = await hashPassword(password)
@@ -1494,7 +1504,19 @@ function TeamPage({ members, onAdd, onDelete }: { members: Member[]; onAdd: () =
   const activeMembers = members.filter((member) => !member.archived)
   const departmentOptions = ['All departments', ...Array.from(new Set(activeMembers.map((member) => member.department)))]
   const visibleMembers = selectedDepartment === 'All departments' ? activeMembers : activeMembers.filter((member) => member.department === selectedDepartment)
-  const saveEdit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!editing) return; const form = new FormData(event.currentTarget); ;(window as any).__biztrackUpdateMember?.(editing.id, { name: String(form.get('name') || '').trim(), phone: String(form.get('phone') || '').trim(), email: String(form.get('email') || '').trim(), department: String(form.get('department') || 'Unassigned'), payRate: Number(form.get('payRate') || 0), payFrequency: String(form.get('payFrequency') || 'Daily') as PayFrequency, signInTime: String(form.get('signInTime') || editing.signInTime), signOutTime: String(form.get('signOutTime') || editing.signOutTime), initials: initialsFor(String(form.get('name') || editing.name)) }); setEditing(null) }
+  useEffect(() => {
+    if (!editing) return
+    const form = document.querySelector('form.admin-modal') as HTMLFormElement | null
+    if (!form || form.querySelector('.effective-change-fields')) return
+    const fields = document.createElement('div')
+    fields.className = 'form-grid effective-change-fields'
+    const tomorrow = new Date(Date.now() + 86400000)
+    const date = tomorrow.toISOString().slice(0, 10)
+    fields.innerHTML = `<label><span>Changes take effect on</span><input name="effectiveDate" type="date" value="${date}" required></label><label><span>Effective time</span><input name="effectiveTime" type="time" value="00:00" required></label>`
+    form.querySelector('.form-actions')?.before(fields)
+    return () => fields.remove()
+  }, [editing])
+  const saveEdit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (!editing) return; const form = new FormData(event.currentTarget); const effectiveAt = `${String(form.get('effectiveDate') || today)}T${String(form.get('effectiveTime') || '00:00')}:00.000Z`; ;(window as any).__biztrackUpdateMember?.(editing.id, { name: String(form.get('name') || '').trim(), phone: String(form.get('phone') || '').trim(), email: String(form.get('email') || '').trim(), department: String(form.get('department') || 'Unassigned'), payRate: Number(form.get('payRate') || 0), payFrequency: String(form.get('payFrequency') || 'Daily') as PayFrequency, signInTime: String(form.get('signInTime') || editing.signInTime), signOutTime: String(form.get('signOutTime') || editing.signOutTime), initials: initialsFor(String(form.get('name') || editing.name)), effectiveAt }); setEditing(null) }
   const confirmDelete = () => { if (!deleting || confirmations.some((value) => value.trim().toLowerCase() !== deleting.name.trim().toLowerCase())) return; onDelete(deleting.id); setDeleting(null); setConfirmations(['', '', '']) }
   return <><PageHeading eyebrow="PEOPLE / TEAM" title="Your team" subtitle="Manage members and keep everyone connected to the right department." /><article className="panel team-panel"><PanelHeading title={`${visibleMembers.length} team members`} subtitle="Contact details and current assignments" action={<select className="filter-button" value={selectedDepartment} onChange={(event) => setSelectedDepartment(event.target.value)}>{departmentOptions.map((department) => <option key={department}>{department}</option>)}</select>} /><div className="table-wrap"><table className="team-members-table"><thead><tr><th>WORKER ID</th><th>TEAM MEMBER</th><th>PHONE</th><th>ID NUMBER</th><th>DEPARTMENT</th><th>ACTIONS</th></tr></thead><tbody>{visibleMembers.map((member) => <tr key={member.id}><td><strong>#{member.id}</strong></td><td><div className="person-cell"><span className={`avatar avatar-${member.color}`}>{member.initials}</span><strong>{member.name}</strong></div></td><td>{member.phone}</td><td>#{member.id}</td><td>{member.department}</td><td><div className="team-actions"><button className="table-action" type="button" onClick={() => setEditing(member)}>Edit</button><button className="delete-button" aria-label={`Delete ${member.name}`} onClick={() => setDeleting(member)}>×</button></div></td></tr>)}</tbody></table></div><div className="team-panel-footer"><button className="primary-button" onClick={onAdd}><span>＋</span> Add member</button></div></article>{editing && <div className="admin-modal-backdrop"><form className="admin-modal member-form" onSubmit={saveEdit}><button className="admin-modal-close" type="button" onClick={() => setEditing(null)}>×</button><h2>Edit worker</h2><p className="admin-modal-user"><span>Worker ID cannot be changed</span>#{editing.id}</p><div className="form-grid"><label><span>Name</span><input name="name" defaultValue={editing.name} required /></label><label><span>Phone</span><input name="phone" defaultValue={editing.phone} required /></label><label><span>Email</span><input name="email" defaultValue={editing.email} /></label><label><span>Department</span><input name="department" defaultValue={editing.department} required /></label><label><span>Pay rate</span><input name="payRate" type="number" min="0" step="0.01" defaultValue={editing.payRate} required /></label><label><span>Pay frequency</span><select name="payFrequency" defaultValue={editing.payFrequency}><option>Daily</option><option>Weekly</option><option>Monthly</option></select></label></div><div className="form-actions"><button type="button" className="secondary-button" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="primary-button">Save worker</button></div></form></div>}{deleting && <div className="admin-modal-backdrop"><section className="admin-modal member-form"><button className="admin-modal-close" type="button" onClick={() => setDeleting(null)}>×</button><h2>Delete worker</h2><p>Type <strong>{deleting.name}</strong> three times to permanently remove this worker. Existing attendance and payroll records will remain available in Print.</p>{confirmations.map((value, index) => <label className="login-field" key={index}><span>Confirmation {index + 1}</span><input value={value} onChange={(event) => setConfirmations((current) => current.map((item, itemIndex) => itemIndex === index ? event.target.value : item))} /></label>)}<div className="form-actions"><button type="button" className="secondary-button" onClick={() => setDeleting(null)}>Cancel</button><button type="button" className="primary-button delete-confirm-button" disabled={confirmations.some((value) => value.trim().toLowerCase() !== deleting.name.trim().toLowerCase())} onClick={confirmDelete}>Delete worker</button></div></section></div>}</>
 }
